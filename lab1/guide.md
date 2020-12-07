@@ -2,7 +2,7 @@
 
 cd SageMaker/eks-sagemaker-workshop/lab1
 
-aws s3 cp s3://ee-assets-prod-us-east-1/modules/cb9c6461a4f440c69d8681bc5a2975a1/v1/lab1/mnist.pkl.gz .
+aws s3 cp s3://ee-assets-prod-eu-west-1/modules/cb9c6461a4f440c69d8681bc5a2975a1/v1/lab1/mnist.pkl.gz .
 aws s3 cp mnist.pkl.gz s3://$AWS_S3_BUCKET_NAME/lab1/source_data/mnist.pkl.gz
 
 aws s3 cp kmeans_preprocessing.py s3://$AWS_S3_BUCKET_NAME/lab1/processing_code/kmeans_preprocessing.py
@@ -11,14 +11,15 @@ dsl-compile --py mnist_classification_pipeline.py --output mnist_classification_
 aws s3 cp mnist_classification_pipeline.tar.gz s3://$AWS_S3_BUCKET_NAME/lab1/pipeline/mnist_classification_pipeline.tar.gz
 
 # Go to S3 in the management console and download this file...
-# echo "https://s3.console.aws.amazon.com/s3/object/$AWS_S3_BUCKET_NAME?region=$AWS_REGION&prefix=lab1/pipeline/mnist_classification_pipeline.tar.gz"
-# https://s3.console.aws.amazon.com/s3/object/mod-cb9c6461a4f440c6-buildoutput-4jkh7sgyuugb?region=eu-west-1&prefix=lab1/pipeline/mnist_classification_pipeline.tar.gz
+echo "https://s3.console.aws.amazon.com/s3/object/$AWS_S3_BUCKET_NAME?region=$AWS_REGION&prefix=lab1/pipeline/mnist_classification_pipeline.tar.gz"
+## https://s3.console.aws.amazon.com/s3/object/mod-cb9c6461a4f440c6-buildoutput-4jkh7sgyuugb?region=eu-west-1&prefix=lab1/pipeline/mnist_classification_pipeline.tar.gz
 
 
 # Go to the Kubeflow Dashboard
-# kubectl get ingress -n istio-system -o jsonpath="{..hostname}"
+kubectl get ingress -n istio-system -o jsonpath="{..hostname}"
+## f7c0561a-istiosystem-istio-2af2-2118813379.eu-west-1.elb.amazonaws.com
 # Log in, confirm the "workshop" user name
-# Import the new pipeline from file
+# Import the new pipeline from file: "Pipelines > + Upload Pipeline"
 
 ### https://docs.aws.amazon.com/eks/latest/userguide/specify-service-account-role.html
 
@@ -58,25 +59,17 @@ EOF
 aws iam create-role --role-name kfp-sagemaker-pod-role --assume-role-policy-document file://trust.json
 aws iam attach-role-policy --role-name kfp-sagemaker-pod-role --policy-arn arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
 aws iam get-role --role-name kfp-sagemaker-pod-role --output text --query 'Role.Arn'
-## arn:aws:iam::654300125888:role/kfp-sagemaker-pod-role
+## arn:aws:iam::198651108330:role/kfp-sagemaker-pod-role
 
-kubectl edit -n workshop serviceaccount default-editor
-
-# Add the following annotation
-
-# metadata:
-#   annotations:
-#     eks.amazonaws.com/role-arn: <role-arn>
-
-# Save and exit with
-# :wq
+# Annotate the service account
+kubectl annotate -n workshop serviceaccount default-editor eks.amazonaws.com/role-arn='<role-arn>'
 
 # Fetch S3 Bucket name
 echo $AWS_S3_BUCKET_NAME 
 ## mod-cb9c6461a4f440c6-buildoutput-4jkh7sgyuugb
 
 # Continue from the Kubeflow Dashboard
-# Create Experiment
+# "+ Create experiment"
 # Provide RoleARN (SageMaker Execution Role!) and S3 Bucket
 ### https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-roles.html
 # Alternate between Kubeflow Dashboard and SageMaker Console
