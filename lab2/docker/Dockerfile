@@ -1,4 +1,4 @@
-FROM 763104351884.dkr.ecr.eu-central-1.amazonaws.com/tensorflow-training:1.15.2-gpu-py36-cu100-ubuntu18.04
+FROM 763104351884.dkr.ecr.eu-west-1.amazonaws.com/tensorflow-training:1.15.2-gpu-py36-cu100-ubuntu18.04
 
 RUN pip3 install sagemaker-training
 
