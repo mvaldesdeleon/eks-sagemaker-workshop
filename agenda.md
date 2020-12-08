@@ -16,3 +16,6 @@ The following is a rough time schedule. Questions can be asked throughout the se
 https://github.com/aws/amazon-sagemaker-examples/tree/master/sagemaker-pipelines  
 *11:30-11:45 - Discuss workload size  
 *11:45-12:00 - Closing, feedback and questions
+
+
+# For lab2 please make sure to change every occurence of "eu-central-1" to "eu-west-1" in both notebooks, the Docker script and the dockerfile
