@@ -8,7 +8,7 @@ After we've run these labs, you will also have the chance to try out the newly a
 The following is a rough time schedule. Questions can be asked throughout the session.
 
 *8:00-8:15   - Claim event engine accounts and confirm your access.   
-*8:15-9:15   - Run lab 1 using the provided guide.
+*8:15-9:15   - Run lab 1 using the provided guide.  
 *9:15-10:15  - Run lab 2 using the provided Jupyter notebooks.  
 *10:15-10:30 - Break  
 *10:30-10:40 - Setup SageMaker Studio   
