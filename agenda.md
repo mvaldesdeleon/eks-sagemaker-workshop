@@ -1,4 +1,4 @@
-###Agenda
+# Agenda
 
 In this hands-on session you will run two labs to automate the workflow of two basic Machine Learning examples using Kubeflow pipelines and SageMaker components:  
 1. k-means classification of the MNIST dataset
