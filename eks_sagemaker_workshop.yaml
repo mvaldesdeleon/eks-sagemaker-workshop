@@ -1,0 +1,506 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Kubeflow and SageMaker Workshop
+
+Parameters:
+  NotebookInstanceType:
+    Description: The type of SageMaker Notebook instance
+    Type: String
+    Default: ml.m5.xlarge
+
+  WorkshopRepository:
+    Description: The Git repository that will be installed on the SageMaker Notebook instance
+    Type: String
+    Default: https://github.com/mvaldesdeleon/eks-sagemaker-workshop
+
+  EKSClusterName:
+    Description: Name of EKS Cluster
+    Type: String
+    Default: kubeflow-cluster
+
+Resources:
+  NotebookInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # RoleName: !Sub NotebookInstanceRole-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+      Policies:
+        - PolicyName: EKSAccess
+          PolicyDocument: 
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "eks:DescribeCluster"
+                Resource: "*"
+        - PolicyName: ECRAccess
+          PolicyDocument: 
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "ecr:*"
+                Resource: "*"
+        - PolicyName: IAMLimitedAccess 
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: [
+                  "iam:GetRole",
+                  "iam:CreateRole",
+                  "iam:AttachRolePolicy"
+                ]
+                Resource:
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/kfp-*"
+        - PolicyName: S3Access
+          PolicyDocument: 
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "s3:ListBucket"
+                Resource:
+                  - "arn:aws:s3:::SageMaker"
+                  - "arn:aws:s3:::ee-assets-prod-eu-west-1"
+                  - !Sub "arn:aws:s3:::${AssetsBucket}"
+              - Effect: Allow
+                Action: [
+                  "s3:GetObject",
+                  "s3:PutObject",
+                  "s3:DeleteObject"
+                ]
+                Resource:
+                  - "arn:aws:s3:::SageMaker/*"
+                  - "arn:aws:s3:::ee-assets-prod-eu-west-1/modules/cb9c6461a4f440c69d8681bc5a2975a1/*"
+                  - !Sub "arn:aws:s3:::${AssetsBucket}/*"
+
+  SageMakerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # RoleName: !Sub SageMakerExecutionRole-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument: 
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "s3:ListBucket"
+                Resource:
+                  - "arn:aws:s3:::SageMaker"
+                  - !Sub "arn:aws:s3:::${AssetsBucket}"
+              - Effect: Allow
+                Action: [
+                  "s3:GetObject",
+                  "s3:PutObject",
+                  "s3:DeleteObject"
+                ]
+                Resource:
+                  - "arn:aws:s3:::SageMaker/*"
+                  - !Sub "arn:aws:s3:::${AssetsBucket}/*"
+
+  BootstrapNotebookInstance:
+    Type: AWS::SageMaker::NotebookInstanceLifecycleConfig
+    Properties: 
+      # NotebookInstanceLifecycleConfigName: kubeflow-bootstrap
+      OnStart: 
+        - Content:
+            Fn::Base64: !Sub |
+              #!/bin/bash -xe
+
+              touch /etc/profile.d/jupyter-env.sh
+              echo "export SHELL=/bin/bash" >> /etc/profile.d/jupyter-env.sh
+              echo "export AWS_CLUSTER_NAME=${EKSClusterName}" >> /etc/profile.d/jupyter-env.sh
+              echo "export AWS_REGION=${AWS::Region}" >> /etc/profile.d/jupyter-env.sh
+              echo "export AWS_PAGER=" >> /etc/profile.d/jupyter-env.sh
+              echo "export AWS_S3_BUCKET_NAME=${AssetsBucket}" >> /etc/profile.d/jupyter-env.sh
+              initctl restart jupyter-server --no-wait
+
+              cd /tmp
+              curl -o awscliv2.zip https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+              unzip awscliv2.zip
+              ./aws/install
+
+              curl -o kubectl https://amazon-eks.s3.us-west-2.amazonaws.com/1.17.12/2020-11-02/bin/linux/amd64/kubectl
+              chmod +x kubectl
+              mv kubectl /usr/local/bin
+
+              curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz
+              mv eksctl /usr/local/bin
+
+              curl --silent --location https://github.com/kubeflow/kfctl/releases/download/v1.1.0/kfctl_v1.1.0-0-g9a3621e_linux.tar.gz | tar xz
+              mv kfctl /usr/local/bin
+
+              curl --silent --location https://github.com/derailed/k9s/releases/download/v0.24.1/k9s_Linux_x86_64.tar.gz | tar xz
+              mv k9s /usr/local/bin
+
+              sudo -u ec2-user -i <<'EOF'
+              ENVS="base python3 tensorflow_p36"
+
+              for ENV in $ENVS; do
+                source /home/ec2-user/anaconda3/bin/activate $ENV
+                pip install --upgrade kfp
+              done
+              source /home/ec2-user/anaconda3/bin/deactivate
+              aws eks update-kubeconfig --name ${EKSClusterName}
+              EOF
+
+  NotebookInstance:
+    Type: AWS::SageMaker::NotebookInstance
+    DependsOn: [EKSWaitCondition]
+    Properties: 
+      # NotebookInstanceName : workshop
+      DirectInternetAccess: Enabled
+      InstanceType: !Ref NotebookInstanceType
+      LifecycleConfigName: !GetAtt BootstrapNotebookInstance.NotebookInstanceLifecycleConfigName
+      RoleArn: !GetAtt NotebookInstanceRole.Arn
+      VolumeSizeInGB: 5
+      DefaultCodeRepository: !Ref WorkshopRepository
+
+  CodeBuildProvisionClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+        - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: EksAllAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "eks:*"
+                Resource: "*"
+              - Effect: Allow
+                Action: [
+                  "ssm:GetParameter",
+                  "ssm:GetParameters",
+                  "ssm:DescribeParameters"
+                ]
+                Resource:
+                  - !Sub "arn:aws:ssm:*:${AWS::AccountId}:parameter/aws/*"
+                  - "arn:aws:ssm:*::parameter/aws/*"
+              - Effect: Allow
+                Action: [
+                  "kms:CreateGrant",
+                  "kms:DescribeKey"
+                ]
+                Resource: "*"
+        - PolicyName: S3Access
+          PolicyDocument: 
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "s3:ListBucket"
+                Resource:
+                  - "arn:aws:s3:::ee-assets-prod-eu-west-1"
+                  - !Sub "arn:aws:s3:::${AssetsBucket}"
+              - Effect: Allow
+                Action: [
+                  "s3:GetObject",
+                  "s3:PutObject",
+                  "s3:DeleteObject"
+                ]
+                Resource:
+                  - "arn:aws:s3:::ee-assets-prod-eu-west-1/modules/cb9c6461a4f440c69d8681bc5a2975a1/*"
+                  - !Sub "arn:aws:s3:::${AssetsBucket}/*"
+        - PolicyName: IAMLimitedAccess 
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: [
+                  "iam:CreateInstanceProfile",
+                  "iam:DeleteInstanceProfile",
+                  "iam:GetInstanceProfile",
+                  "iam:RemoveRoleFromInstanceProfile",
+                  "iam:GetRole",
+                  "iam:CreateRole",
+                  "iam:DeleteRole",
+                  "iam:AttachRolePolicy",
+                  "iam:PutRolePolicy",
+                  "iam:ListInstanceProfiles",
+                  "iam:AddRoleToInstanceProfile",
+                  "iam:ListInstanceProfilesForRole",
+                  "iam:PassRole",
+                  "iam:DetachRolePolicy",
+                  "iam:DeleteRolePolicy",
+                  "iam:GetRolePolicy",
+                  "iam:GetOpenIDConnectProvider",
+                  "iam:CreateOpenIDConnectProvider",
+                  "iam:DeleteOpenIDConnectProvider",
+                  "iam:ListAttachedRolePolicies",
+                  "iam:UpdateAssumeRolePolicy",
+                  "iam:TagRole"
+                ]
+                Resource:
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:instance-profile/eksctl-*"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/eksctl-*"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/*"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/eks-nodegroup.amazonaws.com/AWSServiceRoleForAmazonEKSNodegroup"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/eksctl-managed-*"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/kf-*"
+              - Effect: Allow
+                Action: "iam:GetRole"
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/*"
+              - Effect: Allow
+                Action: "iam:CreateServiceLinkedRole"
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "iam:AWSServiceName": [
+                      "eks.amazonaws.com",
+                      "eks-nodegroup.amazonaws.com",
+                      "eks-fargate.amazonaws.com"
+                    ]
+
+  AssetsBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+
+  ProvisionClusterProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      # Name: ProvisionCluster
+      ServiceRole: !GetAtt CodeBuildProvisionClusterRole.Arn
+      Artifacts:
+        Type: S3
+        Location: !Ref AssetsBucket
+        Path: config
+        NamespaceType: NONE
+        Name: /
+      LogsConfig:
+        CloudWatchLogs:
+          Status:  ENABLED
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        EnvironmentVariables:
+          - Name: CFN_RESPONSE_URL
+            Value: !Ref EKSWaitConditionHandle
+          - Name: AWS_REGION
+            Value: !Sub ${AWS::Region}
+          - Name: AWS_CLUSTER_NAME
+            Value: !Ref EKSClusterName
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: 
+          !Sub |
+            version: 0.2
+            phases:
+              install:
+                runtime-versions:
+                  python: 3.7
+                commands:
+                  - echo ">>> installed python 3.7"
+              pre_build:
+                commands:
+                  - echo ">>> build cluster config"
+                  - |
+                    cat <<EOF > cluster-config.yaml
+                    apiVersion: eksctl.io/v1alpha5
+                    kind: ClusterConfig
+                    metadata:
+                      name: $AWS_CLUSTER_NAME
+                      region: $AWS_REGION
+                      version: "1.17"
+                    cloudWatch:
+                      clusterLogging:
+                        enableTypes: ["*"]
+                    managedNodeGroups:
+                      - name: kubeflow-nodes
+                        instanceType: m5.xlarge
+                        desiredCapacity: 2
+                        minSize: 2
+                        maxSize: 4
+                        privateNetworking: true
+                        volumeSize: 100
+                        volumeType: gp2
+                        volumeEncrypted: true
+                        iam:
+                          withAddonPolicies:
+                            imageBuilder: true
+                            autoScaler: true
+                            ebs: true
+                            albIngress: true
+                            xRay: true
+                            cloudWatch: true
+                    iam:
+                      withOIDC: true
+                    EOF
+                  - echo ">>> build kubeflow config"
+                  - mkdir $AWS_CLUSTER_NAME && cd $AWS_CLUSTER_NAME
+                  - curl -o kfctl_aws.yaml https://raw.githubusercontent.com/kubeflow/manifests/v1.1-branch/kfdef/kfctl_aws.v1.1.0.yaml
+                  - sed -i 's/us-west-2/${AWS::Region}/g' kfctl_aws.yaml
+                  - sed -i 's/admin@kubeflow.org/workshop@kubeflow.org/g' kfctl_aws.yaml
+                  - sed -i 's/12341234/KubeflowWorkshop/g' kfctl_aws.yaml
+                  - cat kfctl_aws.yaml
+                  - cd ..
+                  - echo ">>> install awscli"
+                  - pip3 install --upgrade --user awscli
+                  - echo ">>> install kubectl"
+                  - curl -LO https://amazon-eks.s3.us-west-2.amazonaws.com/1.17.12/2020-11-02/bin/linux/amd64/kubectl
+                  - chmod +x kubectl
+                  - mv -v kubectl /usr/local/bin
+                  - kubectl version --client
+                  - echo ">>> install eksctl"
+                  - curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz
+                  - mv -v eksctl /usr/local/bin
+                  - eksctl version
+                  - echo ">>> install kfctl"
+                  - curl --silent --location https://github.com/kubeflow/kfctl/releases/download/v1.1.0/kfctl_v1.1.0-0-g9a3621e_linux.tar.gz | tar xz
+                  - mv -v kfctl /usr/local/bin
+                  - kfctl version
+              build:
+                commands:
+                  - echo ">>> creating EKS cluster"
+                  - eksctl create cluster -f cluster-config.yaml
+                  - aws eks update-kubeconfig --name ${EKSClusterName}
+                  - eksctl create iamidentitymapping --cluster ${EKSClusterName} --arn ${NotebookInstanceRole.Arn} --group system:masters --username notebook
+                  - echo ">>> installing kubeflow"
+                  - cd $AWS_CLUSTER_NAME
+                  - kfctl apply -V -f kfctl_aws.yaml
+                  - cd ..
+              post_build:
+                commands:
+                  - mv -v $AWS_CLUSTER_NAME/kfctl_aws.yaml .
+                  - echo ">>> build status $CODEBUILD_BUILD_SUCCEEDING"
+                  - |
+                    if [ "$CODEBUILD_BUILD_SUCCEEDING" -eq "1" ]
+                    then
+                      curl -X PUT -H "Content-Type:" --data-binary "{\"Status\": \"SUCCESS\", \"Reason\": \"Creation Complete\", \"UniqueId\": \"$CODEBUILD_BUILD_ID\", \"Data\": \"$CODEBUILD_LOG_PATH\"}" $CFN_RESPONSE_URL
+                    else
+                      curl -X PUT -H "Content-Type:" --data-binary "{\"Status\": \"FAILURE\", \"Reason\": \"Creation Failed\", \"UniqueId\": \"$CODEBUILD_BUILD_ID\", \"Data\": \"$CODEBUILD_LOG_PATH\"}" $CFN_RESPONSE_URL
+                    fi
+            artifacts:
+              files:
+                - cluster-config.yaml
+                - kfctl_aws.yaml
+      TimeoutInMinutes: 60
+
+  EKSWaitConditionHandle:
+    Type: AWS::CloudFormation::WaitConditionHandle
+
+  EKSWaitCondition:
+    Type: AWS::CloudFormation::WaitCondition
+    DependsOn: [TriggerBuild]
+    Properties: 
+      Handle: !Ref EKSWaitConditionHandle
+      Timeout: "3300"
+      Count: 1
+
+  TriggerBuild:
+    Type: Custom::TriggerBuild
+    Properties: 
+      ServiceToken: !GetAtt TriggerBuildLambda.Arn
+      CodebuildProjectName: !Ref ProvisionClusterProject
+
+  TriggerBuildLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument: 
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "codebuild:*"
+                Resource: !GetAtt ProvisionClusterProject.Arn
+
+  TriggerBuildLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Triggers a CodeBuild project
+      Handler: index.handler
+      Role: !GetAtt TriggerBuildLambdaRole.Arn
+      Runtime: python3.7
+      Code:
+        ZipFile: |
+          import boto3
+          import logging
+          import sys
+          import json
+          import urllib3
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          http = urllib3.PoolManager()
+
+          codebuild_client = boto3.client('codebuild')
+
+          def handler(event, context):
+              logger.info('Incoming Event: {0}'.format(event))
+              response = {}
+              response['PhysicalResourceId'] = 'trigger-build'
+              response['StackId'] = event['StackId']
+              response['RequestId'] = event['RequestId']    
+              response['LogicalResourceId'] = event['LogicalResourceId']
+              cfn_response_url = event['ResponseURL']
+
+              if event['RequestType'] == 'Delete':
+                  # return 
+                  logger.info('Nothing to do. Request Type : {0}'.format(event['RequestType']))
+                  response['Status'] = 'SUCCESS'
+
+              elif event['RequestType'] == 'Create' or event['RequestType'] == 'Update':
+
+                try:
+                  codebuild_client.start_build(projectName=event['ResourceProperties']['CodebuildProjectName'])
+                  response['Status'] = 'SUCCESS'
+
+                except:
+                  logging.error('Error: {0}'.format(sys.exc_info()))
+                  response['Status'] = 'FAILED'
+
+              http.request('PUT', cfn_response_url, body=json.dumps(response).encode('utf-8'), headers={'Content-Type': 'application/json'})
+              return 'Done'
+
+Outputs:
+  SageMakerExecutionRoleName:
+    Description: The name of the SageMaker Execution Role
+    Value: !Ref SageMakerExecutionRole
