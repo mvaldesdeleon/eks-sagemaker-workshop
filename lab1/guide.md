@@ -165,6 +165,9 @@ You can now alternate between the Kubeflow Pipelines UI and the [Amazon SageMake
 
 The pipeline run will take about 20 minutes to complete.
 
+**Further troubleshooting**
+If, upon running the KubeFlow pipeline, you receive an error message that the IAM role ARN is not a valid ARN, make sure that you've correctly annotated the IAM role to be assumed by the pods of your pipeline to the workshop service account. Check the "Configure Service Account and IAM Role for Kubeflow Pipelines" section and make sure that you've edited the policy document accordingly and that you've set the ARN of the role created with the policy document in the annotate statement.
+
 ## Test the Inference endpoint
 
 From the Kubeflow Pipelines UI, locate the "SageMaker - Deploy Model" stage, and select it. Within the pop-over window, scroll down to "Output arficats" and locate the Endpoint Name, which should look like this: `Endpoint20201207170530-M49T`.
